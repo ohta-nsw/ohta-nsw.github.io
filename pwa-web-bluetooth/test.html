@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Web Bluetooth 診断ツール</title>
+  <style>
+    body { 
+      font-family: system-ui, -apple-system, sans-serif; 
+      margin: 16px; 
+      max-width: 600px;
+    }
+    button { 
+      padding: 12px 20px; 
+      margin: 8px 0; 
+      font-size: 16px;
+      width: 100%;
+    }
+    .status { 
+      padding: 12px; 
+      margin: 8px 0; 
+      border-radius: 4px;
+      font-weight: bold;
+    }
+    .ok { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    .warning { background: #fff3cd; color: #856404; }
+    pre { 
+      background: #f5f5f5; 
+      padding: 12px; 
+      overflow-x: auto;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🔍 Web Bluetooth 診断</h1>
+
+  <div id="results"></div>
+
+  <h2>Step 1: 環境チェック</h2>
+  <button onclick="checkEnvironment()">環境を診断</button>
+
+  <h2>Step 2: デバイススキャン（簡易版）</h2>
+  <p>すべてのBLEデバイスをスキャンします（フィルタなし）</p>
+  <button onclick="scanAnyDevice()">任意のデバイスをスキャン</button>
+
+  <h2>Step 3: Battery Service スキャン</h2>
+  <p>Battery Service (0x180F) を持つデバイスをスキャン</p>
+  <button onclick="scanBatteryService()">Battery Serviceでスキャン</button>
+
+  <h3>ログ</h3>
+  <pre id="log"></pre>
+
+  <script>
+    const logEl = document.getElementById('log');
+    const resultsEl = document.getElementById('results');
+
+    function log(msg, isError = false) {
+      const timestamp = new Date().toLocaleTimeString();
+      const prefix = isError ? '❌' : '✓';
+      const text = `[${timestamp}] ${prefix} ${msg}\n`;
+      console.log(msg);
+      logEl.textContent += text;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function addResult(title, status, message) {
+      const div = document.createElement('div');
+      div.className = `status ${status}`;
+      div.innerHTML = `<strong>${title}:</strong> ${message}`;
+      resultsEl.appendChild(div);
+    }
+
+    async function checkEnvironment() {
+      resultsEl.innerHTML = '';
+      log('=== 環境診断開始 ===');
+
+      // 1. Web Bluetooth API サポート
+      if ('bluetooth' in navigator) {
+        addResult('Web Bluetooth API', 'ok', 'サポートされています');
+        log('Web Bluetooth API: サポート済み');
+      } else {
+        addResult('Web Bluetooth API', 'error', 'サポートされていません');
+        log('Web Bluetooth API: 未サポート', true);
+        return;
+      }
+
+      // 2. Secure Context (HTTPS)
+      if (window.isSecureContext) {
+        addResult('Secure Context (HTTPS)', 'ok', 'HTTPSで動作しています');
+        log('Secure Context: OK');
+      } else {
+        addResult('Secure Context (HTTPS)', 'error', 'HTTPSが必要です');
+        log('Secure Context: NG - HTTPSで配信してください', true);
+      }
+
+      // 3. User Agent
+      log(`User Agent: ${navigator.userAgent}`);
+
+      // 4. Bluetooth availability チェック
+      try {
+        const available = await navigator.bluetooth.getAvailability();
+        if (available) {
+          addResult('Bluetooth 利用可能性', 'ok', 'Bluetoothが利用可能です');
+          log('Bluetooth: 利用可能');
+        } else {
+          addResult('Bluetooth 利用可能性', 'warning', 'Bluetoothが無効または利用不可');
+          log('Bluetooth: 無効 - デバイスのBluetooth設定を確認してください', true);
+        }
+      } catch (e) {
+        addResult('Bluetooth 利用可能性', 'warning', 'チェックできませんでした');
+        log(`Bluetooth availability check error: ${e.message}`);
+      }
+
+      // 5. 権限ヒント
+      addResult('権限の確認', 'warning', 
+        'Android端末の場合: 設定→アプリ→Chrome→権限→位置情報を「許可」にしてください');
+
+      log('=== 診断完了 ===');
+    }
+
+    async function scanAnyDevice() {
+      log('=== 任意のデバイスをスキャン ===');
+      try {
+        log('デバイス選択ダイアログを表示中...');
+        
+        const device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: ['battery_service', 'device_information']
+        });
+
+        log(`✓ デバイスが選択されました: ${device.name || '(名称なし)'} [${device.id}]`);
+        addResult('スキャン結果', 'ok', `デバイス「${device.name || '(名称なし)'}」を検出しました`);
+
+      } catch (e) {
+        log(`✗ エラー: ${e.name} - ${e.message}`, true);
+        
+        if (e.name === 'NotFoundError') {
+          addResult('スキャン結果', 'warning', 'デバイスが見つかりませんでした（キャンセルまたはタイムアウト）');
+        } else if (e.name === 'SecurityError') {
+          addResult('スキャン結果', 'error', 'セキュリティエラー - HTTPSまたは権限を確認してください');
+        } else if (e.name === 'NotSupportedError') {
+          addResult('スキャン結果', 'error', 'Web Bluetoothがサポートされていません');
+        } else {
+          addResult('スキャン結果', 'error', `エラー: ${e.message}`);
+        }
+        
+        console.error(e);
+      }
+    }
+
+    async function scanBatteryService() {
+      log('=== Battery Service (0x180F) でスキャン ===');
+      try {
+        log('デバイス選択ダイアログを表示中...');
+        
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ services: ['battery_service'] }]
+        });
+
+        log(`✓ デバイスが選択されました: ${device.name || '(名称なし)'}`);
+        
+        // 接続してみる
+        log('接続中...');
+        const server = await device.gatt.connect();
+        log('✓ 接続成功');
+        
+        const service = await server.getPrimaryService('battery_service');
+        log('✓ Battery Service取得成功');
+        
+        const characteristic = await service.getCharacteristic('battery_level');
+        log('✓ Battery Level取得成功');
+        
+        const value = await characteristic.readValue();
+        const battery = value.getUint8(0);
+        log(`✓ バッテリーレベル: ${battery}%`);
+        
+        addResult('Battery Service', 'ok', `バッテリーレベル ${battery}% を取得しました`);
+        
+        device.gatt.disconnect();
+        
+      } catch (e) {
+        log(`✗ エラー: ${e.name} - ${e.message}`, true);
+        addResult('Battery Service', 'error', `エラー: ${e.message}`);
+        console.error(e);
+      }
+    }
+
+    // ページ読み込み時に自動診断
+    window.addEventListener('load', () => {
+      log('診断ツールを読み込みました');
+      log('まず「環境を診断」ボタンをクリックしてください');
+    });
+  </script>
+</body>
+</html>
